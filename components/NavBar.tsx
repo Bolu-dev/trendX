@@ -6,6 +6,13 @@ import { useState } from "react";
 import { useDisconnect } from "wagmi";
 import "@/lib/solana";
 
+function isMobile(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(
+    navigator.userAgent,
+  );
+}
+
 export default function Navbar() {
   const {
     activeChain,
@@ -35,6 +42,15 @@ export default function Navbar() {
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       if (wallet === "phantom") {
+        // Mobile — use Phantom deep link to open the app
+        if (isMobile()) {
+          window.open(
+            `https://phantom.app/ul/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
+            "_blank",
+          );
+          return;
+        }
+        // Desktop — use extension
         const provider = window.phantom?.solana;
         if (!provider) {
           window.open("https://phantom.app", "_blank");
@@ -46,6 +62,15 @@ export default function Navbar() {
         setSolAddress(resp.publicKey.toBase58());
         setSolWallet("phantom");
       } else {
+        // Mobile — use Solflare deep link
+        if (isMobile()) {
+          window.open(
+            `https://solflare.com/ul/v1/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
+            "_blank",
+          );
+          return;
+        }
+        // Desktop — use extension
         const provider = window.solflare;
         if (!provider) {
           window.open("https://solflare.com/download", "_blank");
@@ -65,9 +90,13 @@ export default function Navbar() {
   }
 
   function handleConnectClick() {
+    if (isMobile()) {
+      // On mobile show the picker so user can choose Phantom or Solflare
+      setShowPicker(true);
+      return;
+    }
     const hasPhantom = !!window.phantom?.solana?.isPhantom;
     const hasSolflare = !!window.solflare?.isSolflare;
-
     if (hasPhantom && hasSolflare) {
       setShowPicker(true);
     } else if (hasPhantom) {
@@ -179,7 +208,9 @@ export default function Navbar() {
                 </div>
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Phantom</div>
-                  <div className="text-zinc-500 text-xs">Installed</div>
+                  <div className="text-zinc-500 text-xs">
+                    {isMobile() ? "Open app" : "Installed"}
+                  </div>
                 </div>
               </button>
               <button
@@ -191,7 +222,9 @@ export default function Navbar() {
                 </div>
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Solflare</div>
-                  <div className="text-zinc-500 text-xs">Installed</div>
+                  <div className="text-zinc-500 text-xs">
+                    {isMobile() ? "Open app" : "Installed"}
+                  </div>
                 </div>
               </button>
             </div>

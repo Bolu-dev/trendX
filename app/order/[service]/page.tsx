@@ -26,6 +26,13 @@ interface PageProps {
   params: Promise<{ service: string }>;
 }
 
+function isMobile(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(
+    navigator.userAgent,
+  );
+}
+
 function SolanaConnectButton() {
   const { setSolAddress, setSolWallet } = useChain();
   const [connecting, setConnecting] = useState(false);
@@ -41,6 +48,13 @@ function SolanaConnectButton() {
     setConnecting(true);
     try {
       if (wallet === "phantom") {
+        if (isMobile()) {
+          window.open(
+            `https://phantom.app/ul/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
+            "_blank",
+          );
+          return;
+        }
         const provider = window.phantom?.solana;
         if (!provider) {
           window.open("https://phantom.app", "_blank");
@@ -52,6 +66,13 @@ function SolanaConnectButton() {
         setSolAddress(resp.publicKey.toBase58());
         setSolWallet("phantom");
       } else {
+        if (isMobile()) {
+          window.open(
+            `https://solflare.com/ul/v1/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
+            "_blank",
+          );
+          return;
+        }
         const provider = window.solflare;
         if (!provider) {
           window.open("https://solflare.com/download", "_blank");
@@ -71,6 +92,10 @@ function SolanaConnectButton() {
   }
 
   function handleClick() {
+    if (isMobile()) {
+      setShowPicker(true);
+      return;
+    }
     if (hasPhantom && hasSolflare) {
       setShowPicker(true);
     } else if (hasPhantom) {
@@ -118,7 +143,9 @@ function SolanaConnectButton() {
                 </div>
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Phantom</div>
-                  <div className="text-zinc-500 text-xs">Installed</div>
+                  <div className="text-zinc-500 text-xs">
+                    {isMobile() ? "Open app" : "Installed"}
+                  </div>
                 </div>
               </button>
               <button
@@ -130,7 +157,9 @@ function SolanaConnectButton() {
                 </div>
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Solflare</div>
-                  <div className="text-zinc-500 text-xs">Installed</div>
+                  <div className="text-zinc-500 text-xs">
+                    {isMobile() ? "Open app" : "Installed"}
+                  </div>
                 </div>
               </button>
             </div>
@@ -159,7 +188,6 @@ export default function OrderPage({ params }: PageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Live price state
   const [ethAmount, setEthAmount] = useState<number | null>(null);
   const [solAmount, setSolAmount] = useState<number | null>(null);
   const [priceLoading, setPriceLoading] = useState(true);
@@ -176,10 +204,8 @@ export default function OrderPage({ params }: PageProps) {
 
   const isConnected = chain === "eth" ? ethConnected : !!solAddress;
 
-  // Fetch live prices once on page load for display purposes
   useEffect(() => {
     if (!service) return;
-
     let cancelled = false;
 
     async function loadPrices() {
@@ -199,7 +225,6 @@ export default function OrderPage({ params }: PageProps) {
     }
 
     loadPrices();
-
     return () => {
       cancelled = true;
     };
@@ -240,9 +265,6 @@ export default function OrderPage({ params }: PageProps) {
     setLoading(true);
 
     try {
-      // Always fetch a fresh price right at payment time, never trust the
-      // cached display price — this guarantees the amount charged matches
-      // the live market rate at the moment of signing.
       const { eth: ethPriceUsd, sol: solPriceUsd } = await getLivePrices();
 
       if (chain === "eth") {
@@ -292,7 +314,6 @@ export default function OrderPage({ params }: PageProps) {
         }
 
         const solToSend = usdToSol(service.usdPrice, solPriceUsd);
-
         const senderKey = new PublicKey(solAddress);
         const receiverKey = new PublicKey(SOL_RECEIVER);
 
@@ -385,9 +406,6 @@ export default function OrderPage({ params }: PageProps) {
             const isBlockhashError = lastError.message
               .toLowerCase()
               .includes("blockhash");
-
-            // Only retry automatically on blockhash expiry — anything else (rejection,
-            // insufficient funds) should fail immediately rather than re-prompting the wallet
             if (!isBlockhashError || attempt === maxAttempts) {
               throw lastError;
             }
