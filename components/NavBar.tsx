@@ -25,7 +25,6 @@ export default function Navbar() {
   const [showPicker, setShowPicker] = useState(false);
   const { disconnect: disconnectEVM } = useDisconnect();
 
-  // Internal connection locker to prevent race-condition loops during async hooks state changes
   const connectionInProgress = useRef(false);
 
   const {
@@ -38,7 +37,7 @@ export default function Navbar() {
     connect,
   } = useWallet();
 
-  // Keep ChainContext synchronized with active Solana adapter connection status safely
+  // Keep global state safely synced with context changes
   useEffect(() => {
     if (publicKey && wallet) {
       setSolAddress(publicKey.toBase58());
@@ -52,6 +51,23 @@ export default function Navbar() {
       setSolWallet(null);
     }
   }, [publicKey, wallet, connecting, setSolAddress, setSolWallet]);
+
+  // AUTO-CONNECT FIX: If user is inside an in-app wallet browser, immediately hook the connection
+  useEffect(() => {
+    if (typeof window !== "undefined" && isMobile()) {
+      const isSolanaInjected =
+        (window as any).phantom?.solana || (window as any).solflare;
+      if (
+        isSolanaInjected &&
+        !publicKey &&
+        activeChain === "sol" &&
+        !connecting
+      ) {
+        // Automatically wake up the connection instance if we are running natively inside their app
+        connect().catch(() => {});
+      }
+    }
+  }, [publicKey, activeChain, connecting, connect]);
 
   const shortAddress = solAddress
     ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
@@ -69,42 +85,42 @@ export default function Navbar() {
     setShowPicker(false);
     disconnectEVM();
 
-    // A. MOBILE DEEP LINKING LOGIC
+    // 1. MOBILE ROUTING: Open inside the wallet's optimized in-app browser environments
     if (isMobile()) {
-      const currentUrl = encodeURIComponent(window.location.href);
-      const origin = encodeURIComponent(window.location.origin);
       connectionInProgress.current = false;
 
+      // Strip out protocols for the deep-link paths
+      const cleanUrl = window.location.href.replace(/^https?:\/\//, "");
+
       if (walletName === "Phantom") {
-        window.location.href = `https://phantom.app/ul/v1/connect?app_url=${origin}&redirect_link=${currentUrl}`;
+        // Redirects directly to Phantom's safe built-in web3 wrapper browser
+        window.location.href = `https://phantom.app/ul/browse/https://${cleanUrl}`;
       } else {
-        window.location.href = `https://solflare.com/ul/v1/connect?app_url=${origin}&redirect_link=${currentUrl}`;
+        // Solflare equivalent in-app browse handler
+        window.location.href = `https://solflare.com/ul/v1/browse/https://${cleanUrl}`;
       }
       return;
     }
 
-    // B. DESKTOP ADAPTER CONNECTIONS
+    // 2. DESKTOP ROUTING: Standard extension invocations
     const targetWallet = wallets.find((w) =>
       w.adapter.name.toLowerCase().includes(walletName.toLowerCase()),
     );
 
     try {
       if (targetWallet) {
-        // Run clean library select structure
         await select(targetWallet.adapter.name);
 
-        // Slight macro-task delay gives the library time to set context variables safely
         setTimeout(async () => {
           try {
             await connect();
           } catch (err) {
-            console.warn("User closed or rejected the extension view prompt.");
+            console.warn("User closed extension prompt.");
           } finally {
             connectionInProgress.current = false;
           }
         }, 150);
       } else {
-        // Injection Fallback in case extensions are isolated or hooks are delayed
         if (typeof window !== "undefined") {
           if (walletName === "Phantom" && (window as any).phantom?.solana) {
             const resp = await (window as any).phantom.solana.connect();
@@ -124,7 +140,7 @@ export default function Navbar() {
         connectionInProgress.current = false;
       }
     } catch (err) {
-      console.error("Critical extension registration error:", err);
+      console.error("Extension registry connection fault:", err);
       connectionInProgress.current = false;
     }
   }
@@ -134,13 +150,12 @@ export default function Navbar() {
   }
 
   async function handleDisconnectSolana() {
+    setSolAddress(null);
+    setSolWallet(null);
     try {
-      // Direct reset to break the sticky caching error
-      setSolAddress(null);
-      setSolWallet(null);
       await disconnectSolanaApp();
     } catch (e) {
-      console.warn("Adapter connection state was already clean:", e);
+      console.warn("State wiped cleanly.");
     }
   }
 
