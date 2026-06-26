@@ -2,9 +2,9 @@
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useChain } from "@/providers/ChainContext";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useDisconnect } from "wagmi";
-import "@/lib/solana";
+import { useWallet } from "@solana/wallet-adapter-react"; // <-- Hook imported here
 import { PhantomIcon, SolflareIcon } from "@/components/WalletIcons";
 
 function isMobile(): boolean {
@@ -22,12 +22,33 @@ export default function Navbar() {
     setSolAddress,
     setSolWallet,
   } = useChain();
-  const [connecting, setConnecting] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
-  const [showMobileGuide, setShowMobileGuide] = useState<
-    "phantom" | "solflare" | null
-  >(null);
   const { disconnect: disconnectEVM } = useDisconnect();
+
+  // Grab Solana wallet control hooks
+  const {
+    select,
+    wallets,
+    publicKey,
+    disconnect: disconnectSolanaApp,
+    wallet,
+    connecting,
+  } = useWallet();
+
+  // Keep your custom Global Context in sync with the Solana Adapter State
+  useEffect(() => {
+    if (publicKey) {
+      setSolAddress(publicKey.toBase58());
+      setSolWallet(
+        wallet?.adapter.name.toLowerCase().includes("phantom")
+          ? "phantom"
+          : "solflare",
+      );
+    } else {
+      setSolAddress(null);
+      setSolWallet(null);
+    }
+  }, [publicKey, wallet, setSolAddress, setSolWallet]);
 
   const shortAddress = solAddress
     ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
@@ -38,77 +59,32 @@ export default function Navbar() {
     setActiveChain("sol");
   }
 
-  async function connectWith(wallet: "phantom" | "solflare") {
+  // The simplified function handling everything securely (including mobile deep-linking automatically!)
+  async function connectWith(walletName: "Phantom" | "Solflare") {
     setShowPicker(false);
+    disconnectEVM();
 
-    if (isMobile()) {
-      setShowMobileGuide(wallet);
-      return;
-    }
+    const targetWallet = wallets.find((w) => w.adapter.name === walletName);
 
-    setConnecting(true);
-    try {
-      disconnectEVM();
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      if (wallet === "phantom") {
-        const provider = window.phantom?.solana;
-        if (!provider) {
-          window.open("https://phantom.app", "_blank");
-          return;
-        }
-        await provider.disconnect().catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        const resp = await provider.connect({ onlyIfTrusted: false });
-        setSolAddress(resp.publicKey.toBase58());
-        setSolWallet("phantom");
-      } else {
-        const provider = window.solflare;
-        if (!provider) {
-          window.open("https://solflare.com/download", "_blank");
-          return;
-        }
-        const resp = await provider.connect({ onlyIfTrusted: false });
-        setSolAddress(
-          resp.publicKey?.toBase58() ?? provider.publicKey?.toBase58() ?? null,
-        );
-        setSolWallet("solflare");
+    if (targetWallet) {
+      try {
+        // Select calls the target browser extension on Desktop
+        // OR instantly triggers the standard Mobile Wallet Adapter (MWA) deeplink protocol on Mobile
+        select(targetWallet.adapter.name);
+      } catch (err) {
+        console.error("Failed to connect wallet via adapter:", err);
       }
-    } catch (err) {
-      console.warn("Solana connect error:", err);
-    } finally {
-      setConnecting(false);
     }
   }
 
   function handleConnectClick() {
-    if (isMobile()) {
-      setShowPicker(true);
-      return;
-    }
-    const hasPhantom = !!window.phantom?.solana?.isPhantom;
-    const hasSolflare = !!window.solflare?.isSolflare;
-    if (hasPhantom && hasSolflare) {
-      setShowPicker(true);
-    } else if (hasPhantom) {
-      connectWith("phantom");
-    } else if (hasSolflare) {
-      connectWith("solflare");
-    } else {
-      window.open("https://phantom.app", "_blank");
-    }
+    setShowPicker(true);
   }
 
-  async function disconnectSolana() {
-    try {
-      await window.phantom?.solana?.disconnect().catch(() => {});
-      await window.solflare?.disconnect().catch(() => {});
-    } catch (err) {
-      console.warn("Solana disconnect error:", err);
-    } finally {
-      setSolAddress(null);
-      setSolWallet(null);
-    }
+  async function handleDisconnectSolana() {
+    await disconnectSolanaApp().catch(() => {});
+    setSolAddress(null);
+    setSolWallet(null);
   }
 
   return (
@@ -153,7 +129,7 @@ export default function Navbar() {
                 <ConnectButton showBalance={false} chainStatus="none" />
               ) : solAddress ? (
                 <button
-                  onClick={disconnectSolana}
+                  onClick={handleDisconnectSolana}
                   className="flex items-center gap-2 bg-orange-500/15 border border-orange-500/30 text-orange-400 text-xs font-semibold px-3 py-2 rounded-lg hover:bg-orange-500/25 transition-all"
                 >
                   <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
@@ -173,7 +149,7 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* Wallet picker modal */}
+      {/* Wallet picker modal remains visually identical */}
       {showPicker && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center px-4"
@@ -192,26 +168,26 @@ export default function Navbar() {
             </p>
             <div className="space-y-3">
               <button
-                onClick={() => connectWith("phantom")}
+                onClick={() => connectWith("Phantom")}
                 className="w-full flex items-center gap-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
               >
                 <PhantomIcon size={32} />
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Phantom</div>
                   <div className="text-zinc-500 text-xs">
-                    {isMobile() ? "Open in app" : "Installed"}
+                    {isMobile() ? "Open in app" : "Extension"}
                   </div>
                 </div>
               </button>
               <button
-                onClick={() => connectWith("solflare")}
+                onClick={() => connectWith("Solflare")}
                 className="w-full flex items-center gap-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
               >
                 <SolflareIcon size={32} />
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Solflare</div>
                   <div className="text-zinc-500 text-xs">
-                    {isMobile() ? "Open in app" : "Installed"}
+                    {isMobile() ? "Open in app" : "Extension"}
                   </div>
                 </div>
               </button>
@@ -221,86 +197,6 @@ export default function Navbar() {
               className="w-full mt-4 text-zinc-600 hover:text-zinc-400 text-xs transition-colors"
             >
               Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Mobile guide modal */}
-      {showMobileGuide && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center px-4"
-          onClick={() => setShowMobileGuide(null)}
-        >
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-          <div
-            className="relative bg-zinc-900 border border-white/10 rounded-2xl p-6 w-full max-w-xs"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 mb-5">
-              {showMobileGuide === "phantom" ? (
-                <PhantomIcon size={36} />
-              ) : (
-                <SolflareIcon size={36} />
-              )}
-              <div>
-                <h3 className="text-white font-semibold text-sm">
-                  Open in{" "}
-                  {showMobileGuide === "phantom" ? "Phantom" : "Solflare"}
-                </h3>
-                <p className="text-zinc-500 text-xs">Follow these steps</p>
-              </div>
-            </div>
-
-            <div className="space-y-4 mb-6">
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                  1
-                </div>
-                <p className="text-zinc-400 text-sm">
-                  Open your{" "}
-                  <span className="text-white font-medium">
-                    {showMobileGuide === "phantom" ? "Phantom" : "Solflare"}
-                  </span>{" "}
-                  wallet app
-                </p>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                  2
-                </div>
-                <p className="text-zinc-400 text-sm">
-                  Tap the{" "}
-                  <span className="text-white font-medium">browser icon</span>{" "}
-                  inside the app
-                </p>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                  3
-                </div>
-                <p className="text-zinc-400 text-sm">
-                  Go to{" "}
-                  <span className="text-orange-400 font-mono text-xs">
-                    trendxcrypto.vercel.app
-                  </span>
-                </p>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                  4
-                </div>
-                <p className="text-zinc-400 text-sm">
-                  Connect your wallet and complete your order
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setShowMobileGuide(null)}
-              className="w-full bg-orange-500 hover:bg-orange-400 text-black font-bold py-2.5 rounded-xl text-sm transition-all"
-            >
-              Got it
             </button>
           </div>
         </div>

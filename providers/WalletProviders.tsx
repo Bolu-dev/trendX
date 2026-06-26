@@ -12,11 +12,16 @@ import {
   WalletProvider,
 } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
+// Explicitly import the legacy wallet adapters for native mobile deep-linking compatibility
+import {
+  PhantomWalletAdapter,
+  SolflareWalletAdapter,
+} from "@solana/wallet-adapter-wallets";
 import { clusterApiUrl } from "@solana/web3.js";
 import { useMemo, useCallback, useSyncExternalStore } from "react";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
-import { ChainProvider, useChain } from "./ChainContext";
+import { ChainProvider } from "./ChainContext";
 
 const queryClient = new QueryClient();
 
@@ -29,13 +34,15 @@ function useIsMounted() {
 }
 
 function SolanaProvider({ children }: { children: React.ReactNode }) {
-  const { activeChain } = useChain();
   const network = WalletAdapterNetwork.Mainnet;
   const endpoint = useMemo(() => clusterApiUrl(network), [network]);
 
-  // Empty array — Phantom and Solflare auto-register via Wallet Standard
-  // Only activate the Solana provider when SOL tab is selected
-  const wallets = useMemo(() => [], [activeChain]);
+  // Instantiate the concrete adapters here so your custom mobile picking layout
+  // has a direct registry to hook into for deep-linking
+  const wallets = useMemo(
+    () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
+    [],
+  );
 
   const onError = useCallback((error: WalletError) => {
     if (
