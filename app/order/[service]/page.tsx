@@ -21,6 +21,7 @@ import { PhantomIcon, SolflareIcon } from "@/components/WalletIcons";
 
 const ETH_RECEIVER = "0xc4f80E940ddEdC508163E8541512b48F0Beb922C";
 const SOL_RECEIVER = "2WvB4xXUVVsQgy8BUXYPyUE3fwiXc1q9w7ucS48rd3WF";
+
 const SOL_RPC = "https://solana-rpc.publicnode.com";
 
 interface PageProps {
@@ -38,6 +39,9 @@ function SolanaConnectButton() {
   const { setSolAddress, setSolWallet } = useChain();
   const [connecting, setConnecting] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [showMobileGuide, setShowMobileGuide] = useState<
+    "phantom" | "solflare" | null
+  >(null);
 
   const hasPhantom =
     typeof window !== "undefined" && !!window.phantom?.solana?.isPhantom;
@@ -46,16 +50,15 @@ function SolanaConnectButton() {
 
   async function connectWith(wallet: "phantom" | "solflare") {
     setShowPicker(false);
+
+    if (isMobile()) {
+      setShowMobileGuide(wallet);
+      return;
+    }
+
     setConnecting(true);
     try {
       if (wallet === "phantom") {
-        if (isMobile()) {
-          window.open(
-            `https://phantom.app/ul/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
-            "_blank",
-          );
-          return;
-        }
         const provider = window.phantom?.solana;
         if (!provider) {
           window.open("https://phantom.app", "_blank");
@@ -67,13 +70,6 @@ function SolanaConnectButton() {
         setSolAddress(resp.publicKey.toBase58());
         setSolWallet("phantom");
       } else {
-        if (isMobile()) {
-          window.open(
-            `https://solflare.com/ul/v1/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
-            "_blank",
-          );
-          return;
-        }
         const provider = window.solflare;
         if (!provider) {
           window.open("https://solflare.com/download", "_blank");
@@ -118,6 +114,7 @@ function SolanaConnectButton() {
         {connecting ? "Connecting..." : "Connect SOL Wallet"}
       </button>
 
+      {/* Wallet picker modal */}
       {showPicker && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center px-4"
@@ -143,7 +140,7 @@ function SolanaConnectButton() {
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Phantom</div>
                   <div className="text-zinc-500 text-xs">
-                    {isMobile() ? "Open app" : "Installed"}
+                    {isMobile() ? "Open in app" : "Installed"}
                   </div>
                 </div>
               </button>
@@ -155,7 +152,7 @@ function SolanaConnectButton() {
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Solflare</div>
                   <div className="text-zinc-500 text-xs">
-                    {isMobile() ? "Open app" : "Installed"}
+                    {isMobile() ? "Open in app" : "Installed"}
                   </div>
                 </div>
               </button>
@@ -165,6 +162,86 @@ function SolanaConnectButton() {
               className="w-full mt-4 text-zinc-600 hover:text-zinc-400 text-xs transition-colors"
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile guide modal */}
+      {showMobileGuide && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center px-4"
+          onClick={() => setShowMobileGuide(null)}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="relative bg-zinc-900 border border-white/10 rounded-2xl p-6 w-full max-w-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-5">
+              {showMobileGuide === "phantom" ? (
+                <PhantomIcon size={36} />
+              ) : (
+                <SolflareIcon size={36} />
+              )}
+              <div>
+                <h3 className="text-white font-semibold text-sm">
+                  Open in{" "}
+                  {showMobileGuide === "phantom" ? "Phantom" : "Solflare"}
+                </h3>
+                <p className="text-zinc-500 text-xs">Follow these steps</p>
+              </div>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              <div className="flex items-start gap-3">
+                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  1
+                </div>
+                <p className="text-zinc-400 text-sm">
+                  Open your{" "}
+                  <span className="text-white font-medium">
+                    {showMobileGuide === "phantom" ? "Phantom" : "Solflare"}
+                  </span>{" "}
+                  wallet app
+                </p>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  2
+                </div>
+                <p className="text-zinc-400 text-sm">
+                  Tap the{" "}
+                  <span className="text-white font-medium">browser icon</span>{" "}
+                  inside the app
+                </p>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  3
+                </div>
+                <p className="text-zinc-400 text-sm">
+                  Go to{" "}
+                  <span className="text-orange-400 font-mono text-xs">
+                    trendxcrypto.vercel.app
+                  </span>
+                </p>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  4
+                </div>
+                <p className="text-zinc-400 text-sm">
+                  Connect your wallet and complete your order
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowMobileGuide(null)}
+              className="w-full bg-orange-500 hover:bg-orange-400 text-black font-bold py-2.5 rounded-xl text-sm transition-all"
+            >
+              Got it
             </button>
           </div>
         </div>
@@ -184,7 +261,6 @@ export default function OrderPage({ params }: PageProps) {
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
   const [ethAmount, setEthAmount] = useState<number | null>(null);
   const [solAmount, setSolAmount] = useState<number | null>(null);
   const [priceLoading, setPriceLoading] = useState(true);
