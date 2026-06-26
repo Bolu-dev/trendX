@@ -12,7 +12,6 @@ import {
   WalletProvider,
 } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
-// Explicitly import the legacy wallet adapters for native mobile deep-linking compatibility
 import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
@@ -23,7 +22,15 @@ import "@solana/wallet-adapter-react-ui/styles.css";
 
 import { ChainProvider } from "./ChainContext";
 
-const queryClient = new QueryClient();
+// Singleton instance to prevent QueryClient re-allocation issues on hot reload
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: false,
+    },
+  },
+});
 
 function useIsMounted() {
   return useSyncExternalStore(
@@ -35,26 +42,31 @@ function useIsMounted() {
 
 function SolanaProvider({ children }: { children: React.ReactNode }) {
   const network = WalletAdapterNetwork.Mainnet;
+
+  // Use a stable custom RPC or standard public mainnet endpoint fallbacks safely
   const endpoint = useMemo(() => clusterApiUrl(network), [network]);
 
-  // Instantiate the concrete adapters here so your custom mobile picking layout
-  // has a direct registry to hook into for deep-linking
+  // Stable memoized instances mapping explicit deep-linking hooks
   const wallets = useMemo(
     () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
     [],
   );
 
   const onError = useCallback((error: WalletError) => {
+    // Silently ignore standard user-rejections or trivial UI cancellations to avoid production spam console logs
     if (
+      error.name === "WalletNotFoundError" ||
       error.message?.includes("Unexpected error") ||
       error.message?.includes("User rejected")
-    )
+    ) {
       return;
-    console.warn("Solana wallet error:", error.message ?? error);
+    }
+    console.warn("Solana Wallet Infrastructure Error:", error.message ?? error);
   }, []);
 
   return (
     <ConnectionProvider endpoint={endpoint}>
+      {/* autoConnect set to false to protect your custom multi-chain UI tabs from colliding */}
       <WalletProvider wallets={wallets} onError={onError} autoConnect={false}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
@@ -66,6 +78,7 @@ export default function WalletProviders({ children }: WalletProvidersProps) {
   const mounted = useIsMounted();
 
   if (!mounted) {
+    // Exact dark layout shell match to perfectly avoid hydration flicker layout shift
     return <div className="min-h-screen bg-[#09090B]" />;
   }
 

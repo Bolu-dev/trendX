@@ -2,7 +2,7 @@
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useChain } from "@/providers/ChainContext";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useDisconnect } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { PhantomIcon, SolflareIcon } from "@/components/WalletIcons";
@@ -25,7 +25,9 @@ export default function Navbar() {
   const [showPicker, setShowPicker] = useState(false);
   const { disconnect: disconnectEVM } = useDisconnect();
 
-  // Grab Solana wallet control hooks
+  // Internal connection locker to prevent race-condition loops during async hooks state changes
+  const connectionInProgress = useRef(false);
+
   const {
     select,
     wallets,
@@ -36,34 +38,20 @@ export default function Navbar() {
     connect,
   } = useWallet();
 
-  // 1. Keep your custom Global Context in sync with the Solana Adapter State
+  // Keep ChainContext synchronized with active Solana adapter connection status safely
   useEffect(() => {
-    if (publicKey) {
+    if (publicKey && wallet) {
       setSolAddress(publicKey.toBase58());
       setSolWallet(
-        wallet?.adapter.name.toLowerCase().includes("phantom")
+        wallet.adapter.name.toLowerCase().includes("phantom")
           ? "phantom"
           : "solflare",
       );
-    } else {
+    } else if (!publicKey && !connecting) {
       setSolAddress(null);
       setSolWallet(null);
     }
-  }, [publicKey, wallet, setSolAddress, setSolWallet]);
-
-  // 2. Watch for wallet selection changes and immediately force execute the native prompt trigger
-  useEffect(() => {
-    if (wallet && !publicKey && activeChain === "sol") {
-      const executeConnection = async () => {
-        try {
-          await connect();
-        } catch (err) {
-          console.warn("Wallet connection flow rejected or canceled:", err);
-        }
-      };
-      executeConnection();
-    }
-  }, [wallet, publicKey, connect, activeChain]);
+  }, [publicKey, wallet, connecting, setSolAddress, setSolWallet]);
 
   const shortAddress = solAddress
     ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
@@ -74,15 +62,18 @@ export default function Navbar() {
     setActiveChain("sol");
   }
 
-  // 3. FIXED & HYBRIDIZED: Direct deep-linking on mobile, secure adapter injections on desktop
   async function connectWith(walletName: "Phantom" | "Solflare") {
+    if (connectionInProgress.current) return;
+    connectionInProgress.current = true;
+
     setShowPicker(false);
     disconnectEVM();
 
-    // IF MOBILE: Execute bulletproof universal deep-links directly
+    // A. MOBILE DEEP LINKING LOGIC
     if (isMobile()) {
       const currentUrl = encodeURIComponent(window.location.href);
       const origin = encodeURIComponent(window.location.origin);
+      connectionInProgress.current = false;
 
       if (walletName === "Phantom") {
         window.location.href = `https://phantom.app/ul/v1/connect?app_url=${origin}&redirect_link=${currentUrl}`;
@@ -92,42 +83,49 @@ export default function Navbar() {
       return;
     }
 
-    // IF DESKTOP: Match against library array adapters
+    // B. DESKTOP ADAPTER CONNECTIONS
     const targetWallet = wallets.find((w) =>
       w.adapter.name.toLowerCase().includes(walletName.toLowerCase()),
     );
 
-    if (targetWallet) {
-      try {
-        select(targetWallet.adapter.name);
-      } catch (err) {
-        console.error("Failed to select via adapter registry:", err);
-      }
-    } else {
-      try {
-        select(walletName as any);
-      } catch (err) {
-        try {
-          if (walletName === "Phantom" && window.phantom?.solana) {
-            const resp = await window.phantom.solana.connect();
+    try {
+      if (targetWallet) {
+        // Run clean library select structure
+        await select(targetWallet.adapter.name);
+
+        // Slight macro-task delay gives the library time to set context variables safely
+        setTimeout(async () => {
+          try {
+            await connect();
+          } catch (err) {
+            console.warn("User closed or rejected the extension view prompt.");
+          } finally {
+            connectionInProgress.current = false;
+          }
+        }, 150);
+      } else {
+        // Injection Fallback in case extensions are isolated or hooks are delayed
+        if (typeof window !== "undefined") {
+          if (walletName === "Phantom" && (window as any).phantom?.solana) {
+            const resp = await (window as any).phantom.solana.connect();
             setSolAddress(resp.publicKey.toBase58());
             setSolWallet("phantom");
-          } else if (walletName === "Solflare" && window.solflare) {
-            const resp = await window.solflare.connect();
-            setSolAddress(
+          } else if (walletName === "Solflare" && (window as any).solflare) {
+            const resp = await (window as any).solflare.connect();
+            const pubKey =
               resp.publicKey?.toBase58() ??
-                window.solflare.publicKey?.toBase58() ??
-                null,
-            );
-            setSolWallet("solflare");
+              (window as any).solflare.publicKey?.toBase58();
+            if (pubKey) {
+              setSolAddress(pubKey);
+              setSolWallet("solflare");
+            }
           }
-        } catch (fallbackErr) {
-          console.error(
-            "Direct injection fallback connection failed:",
-            fallbackErr,
-          );
         }
+        connectionInProgress.current = false;
       }
+    } catch (err) {
+      console.error("Critical extension registration error:", err);
+      connectionInProgress.current = false;
     }
   }
 
@@ -136,9 +134,14 @@ export default function Navbar() {
   }
 
   async function handleDisconnectSolana() {
-    await disconnectSolanaApp().catch(() => {});
-    setSolAddress(null);
-    setSolWallet(null);
+    try {
+      // Direct reset to break the sticky caching error
+      setSolAddress(null);
+      setSolWallet(null);
+      await disconnectSolanaApp();
+    } catch (e) {
+      console.warn("Adapter connection state was already clean:", e);
+    }
   }
 
   return (
