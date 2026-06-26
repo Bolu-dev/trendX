@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useChain } from "@/providers/ChainContext";
 import type { SolanaProvider } from "@/lib/solana";
 import "@/lib/solana";
+import { PhantomIcon, SolflareIcon } from "@/components/WalletIcons";
 
 const ETH_RECEIVER = "0xc4f80E940ddEdC508163E8541512b48F0Beb922C";
 const SOL_RECEIVER = "2WvB4xXUVVsQgy8BUXYPyUE3fwiXc1q9w7ucS48rd3WF";
@@ -138,9 +139,7 @@ function SolanaConnectButton() {
                 onClick={() => connectWith("phantom")}
                 className="w-full flex items-center gap-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
               >
-                <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-base">
-                  👻
-                </div>
+                <PhantomIcon size={32} />
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Phantom</div>
                   <div className="text-zinc-500 text-xs">
@@ -152,9 +151,7 @@ function SolanaConnectButton() {
                 onClick={() => connectWith("solflare")}
                 className="w-full flex items-center gap-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
               >
-                <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center text-base">
-                  🔥
-                </div>
+                <SolflareIcon size={32} />
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Solflare</div>
                   <div className="text-zinc-500 text-xs">

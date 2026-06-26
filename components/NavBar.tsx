@@ -5,6 +5,7 @@ import { useChain } from "@/providers/ChainContext";
 import { useState } from "react";
 import { useDisconnect } from "wagmi";
 import "@/lib/solana";
+import { PhantomIcon, SolflareIcon } from "@/components/WalletIcons";
 
 function isMobile(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -42,15 +43,15 @@ export default function Navbar() {
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       if (wallet === "phantom") {
-        // Mobile — use Phantom deep link to open the app
         if (isMobile()) {
+          const encodedUrl = encodeURIComponent(window.location.href);
+          const encodedRef = encodeURIComponent(window.location.origin);
           window.open(
-            `https://phantom.app/ul/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
+            `https://phantom.app/ul/v1/browse/${encodedUrl}?ref=${encodedRef}`,
             "_blank",
           );
           return;
         }
-        // Desktop — use extension
         const provider = window.phantom?.solana;
         if (!provider) {
           window.open("https://phantom.app", "_blank");
@@ -62,15 +63,15 @@ export default function Navbar() {
         setSolAddress(resp.publicKey.toBase58());
         setSolWallet("phantom");
       } else {
-        // Mobile — use Solflare deep link
         if (isMobile()) {
+          const encodedUrl = encodeURIComponent(window.location.href);
+          const encodedRef = encodeURIComponent(window.location.origin);
           window.open(
-            `https://solflare.com/ul/v1/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`,
+            `https://solflare.com/ul/v1/browse/${encodedUrl}?ref=${encodedRef}`,
             "_blank",
           );
           return;
         }
-        // Desktop — use extension
         const provider = window.solflare;
         if (!provider) {
           window.open("https://solflare.com/download", "_blank");
@@ -91,7 +92,6 @@ export default function Navbar() {
 
   function handleConnectClick() {
     if (isMobile()) {
-      // On mobile show the picker so user can choose Phantom or Solflare
       setShowPicker(true);
       return;
     }
@@ -203,9 +203,7 @@ export default function Navbar() {
                 onClick={() => connectWith("phantom")}
                 className="w-full flex items-center gap-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
               >
-                <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-base">
-                  👻
-                </div>
+                <PhantomIcon size={32} />
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Phantom</div>
                   <div className="text-zinc-500 text-xs">
@@ -217,9 +215,7 @@ export default function Navbar() {
                 onClick={() => connectWith("solflare")}
                 className="w-full flex items-center gap-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl px-4 py-3 transition-all"
               >
-                <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center text-base">
-                  🔥
-                </div>
+                <SolflareIcon size={32} />
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Solflare</div>
                   <div className="text-zinc-500 text-xs">
