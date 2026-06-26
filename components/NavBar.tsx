@@ -37,14 +37,12 @@ export default function Navbar() {
     connect,
   } = useWallet();
 
-  // Keep global state safely synced with context changes
+  // 1. Sync global context state
   useEffect(() => {
     if (publicKey && wallet) {
       setSolAddress(publicKey.toBase58());
       setSolWallet(
-        wallet.adapter.name.toLowerCase().includes("phantom")
-          ? "phantom"
-          : "solflare",
+        wallet.adapter.name.toLowerCase().includes("phantom") ? "phantom" : "solflare"
       );
     } else if (!publicKey && !connecting) {
       setSolAddress(null);
@@ -52,22 +50,35 @@ export default function Navbar() {
     }
   }, [publicKey, wallet, connecting, setSolAddress, setSolWallet]);
 
-  // AUTO-CONNECT FIX: If user is inside an in-app wallet browser, immediately hook the connection
+  // 2. DETECT HANDOFF: Auto-trigger prompt inside wallet browser on mobile redirect
   useEffect(() => {
-    if (typeof window !== "undefined" && isMobile()) {
-      const isSolanaInjected =
-        (window as any).phantom?.solana || (window as any).solflare;
-      if (
-        isSolanaInjected &&
-        !publicKey &&
-        activeChain === "sol" &&
-        !connecting
-      ) {
-        // Automatically wake up the connection instance if we are running natively inside their app
-        connect().catch(() => {});
+    if (typeof window !== "undefined" && isMobile() && !publicKey && !connecting) {
+      const pendingWallet = localStorage.getItem("trendx_pending_mobile_wallet");
+      
+      if (pendingWallet) {
+        const targetWallet = wallets.find((w) =>
+          w.adapter.name.toLowerCase().includes(pendingWallet.toLowerCase())
+        );
+
+        if (targetWallet) {
+          localStorage.removeItem("trendx_pending_mobile_wallet"); // Clear early
+          setActiveChain("sol");
+          
+          const autoTrigger = async () => {
+            try {
+              await select(targetWallet.adapter.name);
+              setTimeout(async () => {
+                await connect().catch(() => {});
+              }, 200);
+            } catch (e) {
+              console.warn("Mobile auto-connect prompt skipped:", e);
+            }
+          };
+          autoTrigger();
+        }
       }
     }
-  }, [publicKey, activeChain, connecting, connect]);
+  }, [wallets, publicKey, connecting, select, connect, setActiveChain]);
 
   const shortAddress = solAddress
     ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
@@ -85,32 +96,32 @@ export default function Navbar() {
     setShowPicker(false);
     disconnectEVM();
 
-    // 1. MOBILE ROUTING: Open inside the wallet's optimized in-app browser environments
+    // MOBILE DEEP-LINK HANDOFF WITH SESSION FLAG
     if (isMobile()) {
       connectionInProgress.current = false;
-
-      // Strip out protocols for the deep-link paths
+      
+      // Save intent to local storage so the in-app browser catches it on load
+      localStorage.setItem("trendx_pending_mobile_wallet", walletName.toLowerCase());
+      
       const cleanUrl = window.location.href.replace(/^https?:\/\//, "");
-
+      
       if (walletName === "Phantom") {
-        // Redirects directly to Phantom's safe built-in web3 wrapper browser
         window.location.href = `https://phantom.app/ul/browse/https://${cleanUrl}`;
       } else {
-        // Solflare equivalent in-app browse handler
         window.location.href = `https://solflare.com/ul/v1/browse/https://${cleanUrl}`;
       }
       return;
     }
 
-    // 2. DESKTOP ROUTING: Standard extension invocations
+    // DESKTOP REGULAR ROUTING
     const targetWallet = wallets.find((w) =>
-      w.adapter.name.toLowerCase().includes(walletName.toLowerCase()),
+      w.adapter.name.toLowerCase().includes(walletName.toLowerCase())
     );
 
     try {
       if (targetWallet) {
         await select(targetWallet.adapter.name);
-
+        
         setTimeout(async () => {
           try {
             await connect();
@@ -128,9 +139,7 @@ export default function Navbar() {
             setSolWallet("phantom");
           } else if (walletName === "Solflare" && (window as any).solflare) {
             const resp = await (window as any).solflare.connect();
-            const pubKey =
-              resp.publicKey?.toBase58() ??
-              (window as any).solflare.publicKey?.toBase58();
+            const pubKey = resp.publicKey?.toBase58() ?? (window as any).solflare.publicKey?.toBase58();
             if (pubKey) {
               setSolAddress(pubKey);
               setSolWallet("solflare");
@@ -140,7 +149,7 @@ export default function Navbar() {
         connectionInProgress.current = false;
       }
     } catch (err) {
-      console.error("Extension registry connection fault:", err);
+      console.error("Extension registration fault:", err);
       connectionInProgress.current = false;
     }
   }
@@ -152,6 +161,7 @@ export default function Navbar() {
   async function handleDisconnectSolana() {
     setSolAddress(null);
     setSolWallet(null);
+    localStorage.removeItem("trendx_pending_mobile_wallet");
     try {
       await disconnectSolanaApp();
     } catch (e) {
