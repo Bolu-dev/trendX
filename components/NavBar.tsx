@@ -4,7 +4,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useChain } from "@/providers/ChainContext";
 import { useState, useEffect } from "react";
 import { useDisconnect } from "wagmi";
-import { useWallet } from "@solana/wallet-adapter-react"; // <-- Hook imported here
+import { useWallet } from "@solana/wallet-adapter-react";
 import { PhantomIcon, SolflareIcon } from "@/components/WalletIcons";
 
 function isMobile(): boolean {
@@ -33,9 +33,10 @@ export default function Navbar() {
     disconnect: disconnectSolanaApp,
     wallet,
     connecting,
+    connect,
   } = useWallet();
 
-  // Keep your custom Global Context in sync with the Solana Adapter State
+  // 1. Keep your custom Global Context in sync with the Solana Adapter State
   useEffect(() => {
     if (publicKey) {
       setSolAddress(publicKey.toBase58());
@@ -50,6 +51,20 @@ export default function Navbar() {
     }
   }, [publicKey, wallet, setSolAddress, setSolWallet]);
 
+  // 2. Watch for wallet selection changes and immediately force execute the native prompt trigger
+  useEffect(() => {
+    if (wallet && !publicKey && activeChain === "sol") {
+      const executeConnection = async () => {
+        try {
+          await connect();
+        } catch (err) {
+          console.warn("Wallet connection flow rejected or canceled:", err);
+        }
+      };
+      executeConnection();
+    }
+  }, [wallet, publicKey, connect, activeChain]);
+
   const shortAddress = solAddress
     ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
     : null;
@@ -59,20 +74,59 @@ export default function Navbar() {
     setActiveChain("sol");
   }
 
-  // The simplified function handling everything securely (including mobile deep-linking automatically!)
+  // 3. FIXED & HYBRIDIZED: Direct deep-linking on mobile, secure adapter injections on desktop
   async function connectWith(walletName: "Phantom" | "Solflare") {
     setShowPicker(false);
     disconnectEVM();
 
-    const targetWallet = wallets.find((w) => w.adapter.name === walletName);
+    // IF MOBILE: Execute bulletproof universal deep-links directly
+    if (isMobile()) {
+      const currentUrl = encodeURIComponent(window.location.href);
+      const origin = encodeURIComponent(window.location.origin);
+
+      if (walletName === "Phantom") {
+        window.location.href = `https://phantom.app/ul/v1/connect?app_url=${origin}&redirect_link=${currentUrl}`;
+      } else {
+        window.location.href = `https://solflare.com/ul/v1/connect?app_url=${origin}&redirect_link=${currentUrl}`;
+      }
+      return;
+    }
+
+    // IF DESKTOP: Match against library array adapters
+    const targetWallet = wallets.find((w) =>
+      w.adapter.name.toLowerCase().includes(walletName.toLowerCase()),
+    );
 
     if (targetWallet) {
       try {
-        // Select calls the target browser extension on Desktop
-        // OR instantly triggers the standard Mobile Wallet Adapter (MWA) deeplink protocol on Mobile
         select(targetWallet.adapter.name);
       } catch (err) {
-        console.error("Failed to connect wallet via adapter:", err);
+        console.error("Failed to select via adapter registry:", err);
+      }
+    } else {
+      try {
+        select(walletName as any);
+      } catch (err) {
+        try {
+          if (walletName === "Phantom" && window.phantom?.solana) {
+            const resp = await window.phantom.solana.connect();
+            setSolAddress(resp.publicKey.toBase58());
+            setSolWallet("phantom");
+          } else if (walletName === "Solflare" && window.solflare) {
+            const resp = await window.solflare.connect();
+            setSolAddress(
+              resp.publicKey?.toBase58() ??
+                window.solflare.publicKey?.toBase58() ??
+                null,
+            );
+            setSolWallet("solflare");
+          }
+        } catch (fallbackErr) {
+          console.error(
+            "Direct injection fallback connection failed:",
+            fallbackErr,
+          );
+        }
       }
     }
   }
@@ -149,7 +203,7 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* Wallet picker modal remains visually identical */}
+      {/* Wallet picker modal */}
       {showPicker && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center px-4"
