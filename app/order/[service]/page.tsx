@@ -44,9 +44,10 @@ function SolanaConnectButton() {
   >(null);
 
   const hasPhantom =
-    typeof window !== "undefined" && !!window.phantom?.solana?.isPhantom;
+    typeof window !== "undefined" &&
+    !!(window as any).phantom?.solana?.isPhantom;
   const hasSolflare =
-    typeof window !== "undefined" && !!window.solflare?.isSolflare;
+    typeof window !== "undefined" && !!(window as any).solflare?.isSolflare;
 
   async function connectWith(wallet: "phantom" | "solflare") {
     setShowPicker(false);
@@ -59,7 +60,7 @@ function SolanaConnectButton() {
     setConnecting(true);
     try {
       if (wallet === "phantom") {
-        const provider = window.phantom?.solana;
+        const provider = (window as any).phantom?.solana;
         if (!provider) {
           window.open("https://phantom.app", "_blank");
           return;
@@ -70,7 +71,7 @@ function SolanaConnectButton() {
         setSolAddress(resp.publicKey.toBase58());
         setSolWallet("phantom");
       } else {
-        const provider = window.solflare;
+        const provider = (window as any).solflare;
         if (!provider) {
           window.open("https://solflare.com/download", "_blank");
           return;
@@ -369,9 +370,9 @@ export default function OrderPage({ params }: PageProps) {
 
         const provider: SolanaProvider | null =
           solWallet === "phantom"
-            ? (window.phantom?.solana ?? null)
+            ? ((window as any).phantom?.solana ?? null)
             : solWallet === "solflare"
-              ? (window.solflare ?? null)
+              ? ((window as any).solflare ?? null)
               : null;
 
         if (!provider) {
@@ -435,41 +436,25 @@ export default function OrderPage({ params }: PageProps) {
               }),
             );
 
-            const signed = await provider.signTransaction(transaction);
-            const serialized = Buffer.from(signed.serialize()).toString(
-              "base64",
-            );
+            // FIXED: Swapped signTransaction + manual JSON-RPC send over to signAndSendTransaction.
+            // This leverages Phantom/Solflare's trusted native pipeline to significantly reduce risk flags.
+            if (solWallet === "phantom") {
+              const res = await (
+                window as any
+              ).phantom.solana.signAndSendTransaction(transaction);
+              signature = res.signature;
+            } else {
+              const res = await (window as any).solflare.signAndSendTransaction(
+                transaction,
+              );
+              signature = typeof res === "string" ? res : res.signature;
+            }
 
-            const sendRes = await fetch(SOL_RPC, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                jsonrpc: "2.0",
-                id: 1,
-                method: "sendTransaction",
-                params: [serialized, { encoding: "base64" }],
-              }),
-            });
-
-            if (!sendRes.ok) {
+            if (!signature) {
               throw new Error(
-                "Failed to broadcast transaction. Please try again.",
+                "Transaction signature missing from wallet response.",
               );
             }
-
-            const sendData = await sendRes.json();
-
-            if (sendData.error) {
-              throw new Error(sendData.error.message ?? "Transaction failed");
-            }
-
-            if (!sendData.result) {
-              throw new Error(
-                "Transaction did not return a signature. Please check your wallet.",
-              );
-            }
-
-            signature = sendData.result;
             break;
           } catch (attemptErr: unknown) {
             lastError =
