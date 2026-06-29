@@ -189,7 +189,6 @@ function SolanaConnectButton() {
                 <p className="text-zinc-500 text-xs">Follow these steps</p>
               </div>
             </div>
-
             <div className="space-y-4 mb-6">
               <div className="flex items-start gap-3">
                 <div className="w-5 h-5 rounded-full bg-orange-500/20 text-orange-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
@@ -233,7 +232,6 @@ function SolanaConnectButton() {
                 </p>
               </div>
             </div>
-
             <button
               onClick={() => setShowMobileGuide(null)}
               className="w-full bg-orange-500 hover:bg-orange-400 text-black font-bold py-2.5 rounded-xl text-sm transition-all"
@@ -338,6 +336,30 @@ export default function OrderPage({ params }: PageProps) {
     return blockhash;
   }
 
+  async function sendRawTransaction(serialized: string): Promise<string> {
+    const sendRes = await fetch(SOL_RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "sendTransaction",
+        params: [serialized, { encoding: "base64" }],
+      }),
+    });
+    if (!sendRes.ok) {
+      throw new Error("Failed to broadcast transaction. Please try again.");
+    }
+    const sendData = await sendRes.json();
+    if (sendData.error) {
+      throw new Error(sendData.error.message ?? "Transaction failed");
+    }
+    if (!sendData.result) {
+      throw new Error("Transaction did not return a signature.");
+    }
+    return sendData.result;
+  }
+
   async function handlePayment() {
     if (!contractAddress.trim()) {
       setError("Please enter your coin contract address");
@@ -386,7 +408,7 @@ export default function OrderPage({ params }: PageProps) {
             "Could not determine which Solana wallet is connected",
           );
 
-        const provider: any =
+        const provider: SolanaProvider | null =
           solWallet === "phantom"
             ? (window.phantom?.solana ?? null)
             : solWallet === "solflare"
@@ -399,6 +421,7 @@ export default function OrderPage({ params }: PageProps) {
           );
         }
 
+        // Wake up provider in case service worker went idle
         try {
           await provider.connect({ onlyIfTrusted: true });
         } catch {
@@ -408,37 +431,53 @@ export default function OrderPage({ params }: PageProps) {
         const solToSend = usdToSol(service.usdPrice, solPriceUsd);
         const senderKey = new PublicKey(solAddress);
         const receiverKey = new PublicKey(SOL_RECEIVER);
-        const blockhash = await fetchBlockhash();
 
-        const transaction = new Transaction();
-        transaction.recentBlockhash = blockhash;
-        transaction.feePayer = senderKey;
-        transaction.add(
-          SystemProgram.transfer({
-            fromPubkey: senderKey,
-            toPubkey: receiverKey,
-            lamports: Math.round(solToSend * LAMPORTS_PER_SOL),
-          }),
-        );
+        // Retry loop for blockhash expiry
+        let signature: string | null = null;
+        let lastError: Error | null = null;
+        const maxAttempts = 2;
 
-        // Native injection handling across multi-wallet APIs
-        let txResult: any = null;
-        if (solWallet === "phantom") {
-          txResult = await provider.signAndSendTransaction(transaction);
-        } else {
-          // Solflare transaction parsing fallback logic
-          txResult = await provider.signAndSendTransaction(transaction);
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const blockhash = await fetchBlockhash();
+
+            const transaction = new Transaction();
+            transaction.recentBlockhash = blockhash;
+            transaction.feePayer = senderKey;
+            transaction.add(
+              SystemProgram.transfer({
+                fromPubkey: senderKey,
+                toPubkey: receiverKey,
+                // Use Math.round to avoid floating point lamport errors
+                lamports: Math.round(solToSend * LAMPORTS_PER_SOL),
+              }),
+            );
+
+            // signTransaction + manual broadcast avoids Phantom's
+            // "request blocked" error that triggers on signAndSendTransaction
+            const signed = await provider.signTransaction(transaction);
+            const serialized = Buffer.from(signed.serialize()).toString(
+              "base64",
+            );
+            signature = await sendRawTransaction(serialized);
+            break;
+          } catch (attemptErr: unknown) {
+            lastError =
+              attemptErr instanceof Error
+                ? attemptErr
+                : new Error("Transaction failed");
+            const isBlockhashError = lastError.message
+              .toLowerCase()
+              .includes("blockhash");
+            // Only retry on blockhash expiry — fail immediately for anything else
+            if (!isBlockhashError || attempt === maxAttempts) {
+              throw lastError;
+            }
+          }
         }
 
-        // Unify result extracting strategy across wallets to fetch key payload
-        const signature =
-          txResult?.signature ||
-          (typeof txResult === "string" ? txResult : null);
-
         if (!signature) {
-          throw new Error(
-            "Transaction cancelled or denied by execution simulator.",
-          );
+          throw lastError ?? new Error("Transaction failed");
         }
 
         const queryParams = new URLSearchParams({
@@ -470,11 +509,16 @@ export default function OrderPage({ params }: PageProps) {
       } else if (
         lowerMessage.includes("0x1") ||
         lowerMessage.includes("insufficient") ||
-        lowerMessage.includes("balance") ||
-        lowerMessage.includes("simulation failed")
+        lowerMessage.includes("balance")
       ) {
         friendlyMessage =
-          "Insufficient balance in your wallet for this payment or transaction simulation failed.";
+          "Insufficient balance in your wallet for this payment";
+      } else if (
+        lowerMessage.includes("simulation failed") ||
+        lowerMessage.includes("custom program error")
+      ) {
+        friendlyMessage =
+          "Insufficient balance in your wallet for this payment";
       } else if (lowerMessage.includes("blockhash")) {
         friendlyMessage = "Network timing issue, please try again";
       } else if (
@@ -483,6 +527,12 @@ export default function OrderPage({ params }: PageProps) {
       ) {
         friendlyMessage =
           "Too many requests, please wait a moment and try again";
+      } else if (
+        lowerMessage.includes("request blocked") ||
+        lowerMessage.includes("blocked")
+      ) {
+        friendlyMessage =
+          "Request blocked by wallet. Please disconnect and reconnect your wallet, then try again.";
       }
 
       setError(friendlyMessage);
