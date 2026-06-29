@@ -21,7 +21,6 @@ import { PhantomIcon, SolflareIcon } from "@/components/WalletIcons";
 
 const ETH_RECEIVER = "0xc4f80E940ddEdC508163E8541512b48F0Beb922C";
 const SOL_RECEIVER = "2WvB4xXUVVsQgy8BUXYPyUE3fwiXc1q9w7ucS48rd3WF";
-
 const SOL_RPC = "https://solana-rpc.publicnode.com";
 
 interface PageProps {
@@ -44,10 +43,9 @@ function SolanaConnectButton() {
   >(null);
 
   const hasPhantom =
-    typeof window !== "undefined" &&
-    !!(window as any).phantom?.solana?.isPhantom;
+    typeof window !== "undefined" && !!window.phantom?.solana?.isPhantom;
   const hasSolflare =
-    typeof window !== "undefined" && !!(window as any).solflare?.isSolflare;
+    typeof window !== "undefined" && !!window.solflare?.isSolflare;
 
   async function connectWith(wallet: "phantom" | "solflare") {
     setShowPicker(false);
@@ -60,7 +58,7 @@ function SolanaConnectButton() {
     setConnecting(true);
     try {
       if (wallet === "phantom") {
-        const provider = (window as any).phantom?.solana;
+        const provider = window.phantom?.solana;
         if (!provider) {
           window.open("https://phantom.app", "_blank");
           return;
@@ -71,7 +69,7 @@ function SolanaConnectButton() {
         setSolAddress(resp.publicKey.toBase58());
         setSolWallet("phantom");
       } else {
-        const provider = (window as any).solflare;
+        const provider = window.solflare;
         if (!provider) {
           window.open("https://solflare.com/download", "_blank");
           return;
@@ -115,7 +113,6 @@ function SolanaConnectButton() {
         {connecting ? "Connecting..." : "Connect SOL Wallet"}
       </button>
 
-      {/* Wallet picker modal */}
       {showPicker && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center px-4"
@@ -168,7 +165,6 @@ function SolanaConnectButton() {
         </div>
       )}
 
-      {/* Mobile guide modal */}
       {showMobileGuide && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center px-4"
@@ -320,6 +316,28 @@ export default function OrderPage({ params }: PageProps) {
     );
   }
 
+  async function fetchBlockhash(): Promise<string> {
+    const rpcRes = await fetch(SOL_RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getLatestBlockhash",
+        params: [{ commitment: "confirmed" }],
+      }),
+    });
+    if (!rpcRes.ok) {
+      throw new Error("Could not reach the Solana network. Please try again.");
+    }
+    const rpcData = await rpcRes.json();
+    const blockhash = rpcData?.result?.value?.blockhash;
+    if (!blockhash) {
+      throw new Error("Could not fetch a valid blockhash. Please try again.");
+    }
+    return blockhash;
+  }
+
   async function handlePayment() {
     if (!contractAddress.trim()) {
       setError("Please enter your coin contract address");
@@ -368,11 +386,11 @@ export default function OrderPage({ params }: PageProps) {
             "Could not determine which Solana wallet is connected",
           );
 
-        const provider: SolanaProvider | null =
+        const provider: any =
           solWallet === "phantom"
-            ? ((window as any).phantom?.solana ?? null)
+            ? (window.phantom?.solana ?? null)
             : solWallet === "solflare"
-              ? ((window as any).solflare ?? null)
+              ? (window.solflare ?? null)
               : null;
 
         if (!provider) {
@@ -390,88 +408,37 @@ export default function OrderPage({ params }: PageProps) {
         const solToSend = usdToSol(service.usdPrice, solPriceUsd);
         const senderKey = new PublicKey(solAddress);
         const receiverKey = new PublicKey(SOL_RECEIVER);
+        const blockhash = await fetchBlockhash();
 
-        async function fetchBlockhash(): Promise<string> {
-          const rpcRes = await fetch(SOL_RPC, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: 1,
-              method: "getLatestBlockhash",
-              params: [{ commitment: "confirmed" }],
-            }),
-          });
-          if (!rpcRes.ok) {
-            throw new Error(
-              "Could not reach the Solana network. Please try again.",
-            );
-          }
-          const rpcData = await rpcRes.json();
-          const blockhash = rpcData?.result?.value?.blockhash;
-          if (!blockhash) {
-            throw new Error(
-              "Could not fetch a valid blockhash. Please try again.",
-            );
-          }
-          return blockhash;
+        const transaction = new Transaction();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = senderKey;
+        transaction.add(
+          SystemProgram.transfer({
+            fromPubkey: senderKey,
+            toPubkey: receiverKey,
+            lamports: Math.round(solToSend * LAMPORTS_PER_SOL),
+          }),
+        );
+
+        // Native injection handling across multi-wallet APIs
+        let txResult: any = null;
+        if (solWallet === "phantom") {
+          txResult = await provider.signAndSendTransaction(transaction);
+        } else {
+          // Solflare transaction parsing fallback logic
+          txResult = await provider.signAndSendTransaction(transaction);
         }
 
-        let signature: string | null = null;
-        let lastError: Error | null = null;
-        const maxAttempts = 2;
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-          try {
-            const blockhash = await fetchBlockhash();
-
-            const transaction = new Transaction();
-            transaction.recentBlockhash = blockhash;
-            transaction.feePayer = senderKey;
-            transaction.add(
-              SystemProgram.transfer({
-                fromPubkey: senderKey,
-                toPubkey: receiverKey,
-                lamports: Math.round(solToSend * LAMPORTS_PER_SOL),
-              }),
-            );
-
-            // FIXED: Swapped signTransaction + manual JSON-RPC send over to signAndSendTransaction.
-            // This leverages Phantom/Solflare's trusted native pipeline to significantly reduce risk flags.
-            if (solWallet === "phantom") {
-              const res = await (
-                window as any
-              ).phantom.solana.signAndSendTransaction(transaction);
-              signature = res.signature;
-            } else {
-              const res = await (window as any).solflare.signAndSendTransaction(
-                transaction,
-              );
-              signature = typeof res === "string" ? res : res.signature;
-            }
-
-            if (!signature) {
-              throw new Error(
-                "Transaction signature missing from wallet response.",
-              );
-            }
-            break;
-          } catch (attemptErr: unknown) {
-            lastError =
-              attemptErr instanceof Error
-                ? attemptErr
-                : new Error("Transaction failed");
-            const isBlockhashError = lastError.message
-              .toLowerCase()
-              .includes("blockhash");
-            if (!isBlockhashError || attempt === maxAttempts) {
-              throw lastError;
-            }
-          }
-        }
+        // Unify result extracting strategy across wallets to fetch key payload
+        const signature =
+          txResult?.signature ||
+          (typeof txResult === "string" ? txResult : null);
 
         if (!signature) {
-          throw lastError ?? new Error("Transaction failed");
+          throw new Error(
+            "Transaction cancelled or denied by execution simulator.",
+          );
         }
 
         const queryParams = new URLSearchParams({
@@ -494,14 +461,20 @@ export default function OrderPage({ params }: PageProps) {
 
       let friendlyMessage = "Something went wrong. Please try again.";
 
-      if (lowerMessage.includes("rejected")) {
+      if (
+        lowerMessage.includes("rejected") ||
+        lowerMessage.includes("denied") ||
+        lowerMessage.includes("user reject")
+      ) {
         friendlyMessage = "Transaction rejected in wallet";
       } else if (
         lowerMessage.includes("0x1") ||
-        lowerMessage.includes("insufficient")
+        lowerMessage.includes("insufficient") ||
+        lowerMessage.includes("balance") ||
+        lowerMessage.includes("simulation failed")
       ) {
         friendlyMessage =
-          "Insufficient balance in your wallet for this payment";
+          "Insufficient balance in your wallet for this payment or transaction simulation failed.";
       } else if (lowerMessage.includes("blockhash")) {
         friendlyMessage = "Network timing issue, please try again";
       } else if (
