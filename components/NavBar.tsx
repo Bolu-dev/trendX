@@ -37,7 +37,7 @@ export default function Navbar() {
     connect,
   } = useWallet();
 
-  // Keep global state cleanly matched to adapter lifecycle
+  // 1. Keep global state cleanly matched to adapter lifecycle
   useEffect(() => {
     if (publicKey && wallet) {
       setSolAddress(publicKey.toBase58());
@@ -51,6 +51,18 @@ export default function Navbar() {
       setSolWallet(null);
     }
   }, [publicKey, wallet, connecting, setSolAddress, setSolWallet]);
+
+  // 2. IN-APP BROWSER DETECTOR HOOK: Auto-toggles view layout directly to SOL if running inside mobile wallets
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const isPhantomBrowser = !!(window as any).phantom?.solana;
+      const isSolflareBrowser = !!(window as any).solflare;
+
+      if (isPhantomBrowser || isSolflareBrowser) {
+        setActiveChain("sol");
+      }
+    }
+  }, [setActiveChain]);
 
   const shortAddress = solAddress
     ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
@@ -68,19 +80,21 @@ export default function Navbar() {
     setShowPicker(false);
     disconnectEVM();
 
-    // 1. MOBILE BROWSERS (Chrome/Safari) -> Deep Link directly into native approval views
+    // 1. MOBILE BROWSERS (Chrome/Safari) -> Deep Link directly into native approval views with explicit ref keys
     if (
       isMobile() &&
       !(window as any).phantom?.solana &&
       !(window as any).solflare
     ) {
       connectionInProgress.current = false;
-      const cleanUrl = window.location.href.replace(/^https?:\/\//, "");
+
+      const currentUrl = encodeURIComponent(window.location.href);
+      const currentOrigin = encodeURIComponent(window.location.origin);
 
       if (walletName === "Phantom") {
-        window.location.href = `https://phantom.app/ul/browse/https://${cleanUrl}`;
+        window.location.href = `https://phantom.app/ul/browse/${currentUrl}?ref=${currentOrigin}`;
       } else {
-        window.location.href = `https://solflare.com/ul/v1/browse/https://${cleanUrl}`;
+        window.location.href = `https://solflare.com/ul/v1/browse/${currentUrl}?ref=${currentOrigin}`;
       }
       return;
     }
