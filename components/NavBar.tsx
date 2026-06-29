@@ -37,48 +37,20 @@ export default function Navbar() {
     connect,
   } = useWallet();
 
-  // 1. Sync global context state
+  // Keep global state cleanly matched to adapter lifecycle
   useEffect(() => {
     if (publicKey && wallet) {
       setSolAddress(publicKey.toBase58());
       setSolWallet(
-        wallet.adapter.name.toLowerCase().includes("phantom") ? "phantom" : "solflare"
+        wallet.adapter.name.toLowerCase().includes("phantom")
+          ? "phantom"
+          : "solflare",
       );
     } else if (!publicKey && !connecting) {
       setSolAddress(null);
       setSolWallet(null);
     }
   }, [publicKey, wallet, connecting, setSolAddress, setSolWallet]);
-
-  // 2. DETECT HANDOFF: Auto-trigger prompt inside wallet browser on mobile redirect
-  useEffect(() => {
-    if (typeof window !== "undefined" && isMobile() && !publicKey && !connecting) {
-      const pendingWallet = localStorage.getItem("trendx_pending_mobile_wallet");
-      
-      if (pendingWallet) {
-        const targetWallet = wallets.find((w) =>
-          w.adapter.name.toLowerCase().includes(pendingWallet.toLowerCase())
-        );
-
-        if (targetWallet) {
-          localStorage.removeItem("trendx_pending_mobile_wallet"); // Clear early
-          setActiveChain("sol");
-          
-          const autoTrigger = async () => {
-            try {
-              await select(targetWallet.adapter.name);
-              setTimeout(async () => {
-                await connect().catch(() => {});
-              }, 200);
-            } catch (e) {
-              console.warn("Mobile auto-connect prompt skipped:", e);
-            }
-          };
-          autoTrigger();
-        }
-      }
-    }
-  }, [wallets, publicKey, connecting, select, connect, setActiveChain]);
 
   const shortAddress = solAddress
     ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
@@ -96,15 +68,15 @@ export default function Navbar() {
     setShowPicker(false);
     disconnectEVM();
 
-    // MOBILE DEEP-LINK HANDOFF WITH SESSION FLAG
-    if (isMobile()) {
+    // 1. MOBILE BROWSERS (Chrome/Safari) -> Deep Link directly into native approval views
+    if (
+      isMobile() &&
+      !(window as any).phantom?.solana &&
+      !(window as any).solflare
+    ) {
       connectionInProgress.current = false;
-      
-      // Save intent to local storage so the in-app browser catches it on load
-      localStorage.setItem("trendx_pending_mobile_wallet", walletName.toLowerCase());
-      
       const cleanUrl = window.location.href.replace(/^https?:\/\//, "");
-      
+
       if (walletName === "Phantom") {
         window.location.href = `https://phantom.app/ul/browse/https://${cleanUrl}`;
       } else {
@@ -113,25 +85,27 @@ export default function Navbar() {
       return;
     }
 
-    // DESKTOP REGULAR ROUTING
+    // 2. IN-APP DAPP BROWSERS & DESKTOP EXTENSIONS -> Run instant native connection prompt
     const targetWallet = wallets.find((w) =>
-      w.adapter.name.toLowerCase().includes(walletName.toLowerCase())
+      w.adapter.name.toLowerCase().includes(walletName.toLowerCase()),
     );
 
     try {
       if (targetWallet) {
         await select(targetWallet.adapter.name);
-        
+
+        // Brief timeout ensures adapter allocation triggers the view cleanly
         setTimeout(async () => {
           try {
             await connect();
           } catch (err) {
-            console.warn("User closed extension prompt.");
+            console.warn("Connection prompt closed by user.");
           } finally {
             connectionInProgress.current = false;
           }
-        }, 150);
+        }, 100);
       } else {
+        // Ultimate Window Object Injection Fallback
         if (typeof window !== "undefined") {
           if (walletName === "Phantom" && (window as any).phantom?.solana) {
             const resp = await (window as any).phantom.solana.connect();
@@ -139,7 +113,9 @@ export default function Navbar() {
             setSolWallet("phantom");
           } else if (walletName === "Solflare" && (window as any).solflare) {
             const resp = await (window as any).solflare.connect();
-            const pubKey = resp.publicKey?.toBase58() ?? (window as any).solflare.publicKey?.toBase58();
+            const pubKey =
+              resp.publicKey?.toBase58() ??
+              (window as any).solflare.publicKey?.toBase58();
             if (pubKey) {
               setSolAddress(pubKey);
               setSolWallet("solflare");
@@ -149,7 +125,7 @@ export default function Navbar() {
         connectionInProgress.current = false;
       }
     } catch (err) {
-      console.error("Extension registration fault:", err);
+      console.error("Adapter registry fault:", err);
       connectionInProgress.current = false;
     }
   }
@@ -161,11 +137,10 @@ export default function Navbar() {
   async function handleDisconnectSolana() {
     setSolAddress(null);
     setSolWallet(null);
-    localStorage.removeItem("trendx_pending_mobile_wallet");
     try {
       await disconnectSolanaApp();
     } catch (e) {
-      console.warn("State wiped cleanly.");
+      console.warn("Wiped state.");
     }
   }
 
@@ -257,7 +232,9 @@ export default function Navbar() {
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Phantom</div>
                   <div className="text-zinc-500 text-xs">
-                    {isMobile() ? "Open in app" : "Extension"}
+                    {isMobile() && !(window as any).phantom?.solana
+                      ? "Open in app"
+                      : "Extension"}
                   </div>
                 </div>
               </button>
@@ -269,7 +246,9 @@ export default function Navbar() {
                 <div className="text-left">
                   <div className="text-white text-sm font-medium">Solflare</div>
                   <div className="text-zinc-500 text-xs">
-                    {isMobile() ? "Open in app" : "Extension"}
+                    {isMobile() && !(window as any).solflare
+                      ? "Open in app"
+                      : "Extension"}
                   </div>
                 </div>
               </button>
